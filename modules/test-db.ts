@@ -1,27 +1,21 @@
-import { Pool } from 'pg';
+import { createClient } from "@supabase/supabase-js";
 
-const pool = new Pool({
-  connectionString: process.env.SUPABASE_DB_URL,
-  ssl: { rejectUnauthorized: false },
-});
+const SUPABASEURL = zuplo.env.SUPABASEURL;  
+const SUPABASEKEY = zuplo.env.SUPABASEKEY;  
 
-export default async function handler(request: any) {
-  try {
-    const res = await pool.query('SELECT NOW() as current_time');
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        success: true,
-        currentTime: res.rows[0].current_time,
-      }),
-    };
-  } catch (err: any) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({
-        success: false,
-        error: err.message,
-      }),
-    };
+const supabase = createClient(SUPABASEURL, SUPABASEKEY);
+
+export default async function handler(request: Request) {
+  const { data, error } = await supabase.from("places").select("id, name").limit(1);
+
+  if (error) {
+    return new Response(JSON.stringify({ success: false, error: error.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" }
+    });
   }
+
+  return new Response(JSON.stringify({ success: true, sample: data }), {
+    headers: { "Content-Type": "application/json" }
+  });
 }
