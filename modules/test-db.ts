@@ -1,7 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
+import { environment } from "@zuplo/runtime"; 
 
-const SUPABASEURL = zuplo.env.SUPABASEURL;  
-const SUPABASEKEY = zuplo.env.SUPABASEKEY;  
+const SUPABASEURL = environment.SUPABASEURL;   
+const SUPABASEKEY = environment.SUPABASEKEY;   
 
 const supabase = createClient(SUPABASEURL, SUPABASEKEY);
 

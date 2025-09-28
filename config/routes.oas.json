@@ -25,6 +25,68 @@
         },
         "operationId": "new-route-4808ebd9"
       }
-    }
+    },
+    "/path-1": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "New Route",
+        "description": "",
+        "x-zuplo-route": {
+          "corsPolicy": "none",
+          "handler": {
+            "export": "urlForwardHandler",
+            "module": "$import(@zuplo/runtime)",
+            "options": {
+              "baseUrl": "https://echo.zuplo.io"
+            }
+          },
+          "policies": {
+            "inbound": []
+          }
+        },
+        "operationId": "new-route-c46f0001"
+      }
+    },
+    "/places": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "Places Handler",
+        "description": "Test endpoint for places",
+        "x-zuplo-route": {
+          "corsPolicy": "anything-goes",
+          "handler": {
+            "export": "default",
+            "module": "$import(./modules/places-handler)",
+            "options": {}
+          },
+          "policies": {
+            "inbound": []
+          }
+        },
+        "operationId": "places-route-001"
+      }
+    },
+    "/debug-env": {
+  "x-zuplo-path": { "pathMode": "open-api" },
+  "get": {
+    "summary": "Debug Env",
+    "description": "Show available env variable names",
+    "x-zuplo-route": {
+      "corsPolicy": "anything-goes",
+      "handler": {
+        "export": "default",
+        "module": "$import(./modules/debug-env)",
+        "options": {}
+      },
+      "policies": { "inbound": [] }
+    },
+    "operationId": "debug-env-002"
+  }
+}
+
   }
 }
