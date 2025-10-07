@@ -14,15 +14,15 @@ interface GeoapifyResponse {
 
 function getApiKey(): string | null {
   try {
-    const value = (zuplo.env as Record<string, unknown>).GEOAPIFY_API_KEY;
+    const value = (zuplo.env as Record<string, unknown>).GEOAPIFY_KEY;
     if (typeof value === "string" && value.length > 0) {
       return value;
     }
   } catch (error) {
-    console.warn("[Geocode] Unable to read GEOAPIFY_API_KEY", error);
+    console.warn("[Geocode] Unable to read GEOAPIFY_KEY", error);
   }
-  if (typeof process !== "undefined" && process.env.GEOAPIFY_API_KEY) {
-    return process.env.GEOAPIFY_API_KEY;
+  if (typeof process !== "undefined" && process.env.GEOAPIFY_KEY) {
+    return process.env.GEOAPIFY_KEY;
   }
   return null;
 }
