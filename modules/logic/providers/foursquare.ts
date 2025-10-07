@@ -1,5 +1,6 @@
 import { normalizeFSQ, type Place } from "../normalizer";
 import { withUserAgent } from "../utils";
+import { readEnvValue, type EnvSource } from "../env";
 
 const BASE_URL = "https://api.foursquare.com/v3/places/search";
 
@@ -12,19 +13,20 @@ export interface FoursquareQuery {
   open_now?: boolean;
 }
 
-function getApiKey(): string | null {
-  try {
-    return zuplo.env.FOURSQUARE_API_KEY ?? null;
-  } catch (error) {
-    console.warn("[Foursquare] API key not configured", error);
-    return null;
+function getApiKey(env?: EnvSource): string | null {
+  const value = readEnvValue(env, "FOURSQUARE_API_KEY");
+  if (value) {
+    return value;
   }
+  console.warn("[Foursquare] API key not configured");
+  return null;
 }
 
 export async function searchWithFoursquare(
-  query: FoursquareQuery
+  query: FoursquareQuery,
+  env?: EnvSource
 ): Promise<Place[]> {
-  const apiKey = getApiKey();
+  const apiKey = getApiKey(env);
   if (!apiKey) {
     return [];
   }

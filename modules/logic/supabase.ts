@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { CategoryBucket } from "./category-map";
 import type { Place } from "./normalizer";
+import { readEnvValue, type EnvSource } from "./env";
 
 export interface PlaceCacheKey {
   lat: number;
@@ -51,46 +52,35 @@ interface RequestContext {
 }
 
 let cachedClient: SupabaseClient | null | undefined;
+let cachedCredentials: { url: string; key: string } | null = null;
 let warnedMissingCredentials = false;
 const requestContextCache = new WeakMap<Request, Promise<RequestContext>>();
 
-function readEnv(key: string): string | null {
-  try {
-    const value = (zuplo.env as Record<string, unknown>)[key];
-    if (typeof value === "string" && value.length > 0) {
-      return value;
-    }
-  } catch (error) {
-    if (!warnedMissingCredentials) {
-      console.warn(`[Supabase] Unable to read env ${key}`, error);
-    }
-  }
-  if (typeof process !== "undefined" && process.env) {
-    const value = process.env[key];
-    if (typeof value === "string" && value.length > 0) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function getClient(): SupabaseClient | null {
-  if (cachedClient !== undefined) {
-    return cachedClient;
-  }
-  const url = readEnv("SUPABASEURL");
-  const key = readEnv("SUPABASEKEY");
+function getClient(env?: EnvSource): SupabaseClient | null {
+  const url = readEnvValue(env, "SUPABASEURL");
+  const key = readEnvValue(env, "SUPABASEKEY");
   if (!url || !key) {
     if (!warnedMissingCredentials) {
       console.warn("[Supabase] Missing SUPABASEURL or SUPABASEKEY");
       warnedMissingCredentials = true;
     }
     cachedClient = null;
+    cachedCredentials = null;
+    return cachedClient;
+  }
+
+  if (
+    cachedClient &&
+    cachedCredentials &&
+    cachedCredentials.url === url &&
+    cachedCredentials.key === key
+  ) {
     return cachedClient;
   }
   cachedClient = createClient(url, key, {
     auth: { persistSession: false },
   });
+  cachedCredentials = { url, key };
   return cachedClient;
 }
 
@@ -275,9 +265,10 @@ async function resolveRequestContext(
 }
 
 export async function getCachedPlaces(
-  key: PlaceCacheKey
+  key: PlaceCacheKey,
+  env?: EnvSource
 ): Promise<Place[] | null> {
-  const client = getClient();
+  const client = getClient(env);
   if (!client) {
     return null;
   }
@@ -302,9 +293,10 @@ export async function getCachedPlaces(
 export async function putCachedPlaces(
   key: PlaceCacheKey,
   places: Place[],
-  meta: CacheMetadata
+  meta: CacheMetadata,
+  env?: EnvSource
 ): Promise<void> {
-  const client = getClient();
+  const client = getClient(env);
   if (!client || places.length === 0) {
     return;
   }
@@ -331,8 +323,11 @@ export async function putCachedPlaces(
   }
 }
 
-export async function logRequest(entry: RequestLogEntry): Promise<void> {
-  const client = getClient();
+export async function logRequest(
+  entry: RequestLogEntry,
+  env?: EnvSource
+): Promise<void> {
+  const client = getClient(env);
   if (!client) {
     return;
   }
@@ -362,9 +357,10 @@ export async function logRequest(entry: RequestLogEntry): Promise<void> {
 
 export async function getCachedTravelTimes(
   origin: TravelCacheKey,
-  placeIds: string[]
+  placeIds: string[],
+  env?: EnvSource
 ): Promise<Map<string, TravelCacheRecord>> {
-  const client = getClient();
+  const client = getClient(env);
   const result = new Map<string, TravelCacheRecord>();
   if (!client || placeIds.length === 0) {
     return result;
@@ -396,9 +392,10 @@ export async function getCachedTravelTimes(
 
 export async function putCachedTravelTimes(
   origin: TravelCacheKey,
-  records: TravelCacheRecord[]
+  records: TravelCacheRecord[],
+  env?: EnvSource
 ): Promise<void> {
-  const client = getClient();
+  const client = getClient(env);
   if (!client || records.length === 0) {
     return;
   }
