@@ -1,88 +1,75 @@
-import { annotateDistance, withUserAgent } from "../utils";
-import type { Place, PlacesQuery, ProviderSearchResult } from "../types";
+import { normalizeOSM, type Place } from "../normalizer";
+import { withUserAgent } from "../utils";
 
-interface PhotonFeature {
-  geometry: {
-    coordinates: [number, number];
-  };
-  properties: {
-    osm_id: number;
-    osm_type: string;
-    name?: string;
-    street?: string;
-    housenumber?: string;
-    city?: string;
-    state?: string;
-    country?: string;
-    postcode?: string;
-    type?: string;
-    osm_key?: string;
-    osm_value?: string;
-  };
+const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+
+export interface OsmQuery {
+  lat: number;
+  lng: number;
+  radius_m: number;
+  limit: number;
 }
 
-interface PhotonResponse {
-  features: PhotonFeature[];
+const OUTDOOR_FILTER = [
+  "leisure=park",
+  "leisure=garden",
+  "leisure=playground",
+  "leisure=pitch",
+  "leisure=sports_centre",
+  "leisure=track",
+  "natural=wood",
+  "natural=grassland",
+  "natural=beach",
+  "natural=heath",
+  "natural=water",
+  "tourism=zoo",
+  "tourism=theme_park",
+  "tourism=attraction",
+  "tourism=camp_site",
+  "tourism=picnic_site",
+];
+
+function buildOverpassQuery(query: OsmQuery): string {
+  const radius = Math.min(query.radius_m, 40_000);
+  const filters = OUTDOOR_FILTER.map((statement) => {
+    const [key, value] = statement.split("=");
+    return `  node["${key}"="${value}"](around:${radius},${query.lat},${query.lng});`;
+  }).join("\n");
+
+  const wayFilters = OUTDOOR_FILTER.map((statement) => {
+    const [key, value] = statement.split("=");
+    return `  way["${key}"="${value}"](around:${radius},${query.lat},${query.lng});`;
+  }).join("\n");
+
+  return `[out:json][timeout:25];
+  (
+${filters}
+${wayFilters}
+  );
+  out center ${query.limit};`;
 }
 
-export async function searchWithOsm(
-  query: PlacesQuery
-): Promise<ProviderSearchResult | null> {
-  const { lat, lng, categories, limit = 20 } = query;
-  const search = categories.length > 0 ? categories.join(" ") : "amenity";
-  const url = new URL("https://photon.komoot.io/api/");
-  url.searchParams.set("lat", lat.toString());
-  url.searchParams.set("lon", lng.toString());
-  url.searchParams.set("q", search);
-  url.searchParams.set("limit", Math.min(limit, 50).toString());
-  url.searchParams.set("lang", "en");
+export async function searchWithOsm(query: OsmQuery): Promise<Place[]> {
+  const body = buildOverpassQuery(query);
 
-  const response = await fetch(url.toString(), withUserAgent());
-  if (!response.ok) {
-    throw new Error(`OSM search failed with status ${response.status}`);
-  }
-
-  const payload = (await response.json()) as PhotonResponse;
-  const places: Place[] = (payload.features ?? []).map((feature) => {
-    const [featureLng, featureLat] = feature.geometry.coordinates;
-    const { properties } = feature;
-
-    const addressParts = [
-      properties.housenumber && properties.street
-        ? `${properties.housenumber} ${properties.street}`
-        : properties.street,
-      properties.city,
-      properties.state,
-      properties.country,
-      properties.postcode,
-    ].filter(Boolean);
-
-    return annotateDistance(
-      {
-        id: `${properties.osm_type}:${properties.osm_id}`,
-        name: properties.name ?? properties.type ?? "Unnamed place",
-        lat: featureLat,
-        lng: featureLng,
-        address: addressParts.join(", "),
-        categories: [
-          properties.type,
-          properties.osm_key,
-          properties.osm_value,
-        ].filter(Boolean) as string[],
-        provider: "osm",
-        raw: feature,
+  const response = await fetch(
+    OVERPASS_URL,
+    withUserAgent({
+      method: "POST",
+      body,
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
       },
-      lat,
-      lng
-    );
-  });
+    })
+  );
 
-  if (places.length === 0) {
-    return null;
+  if (!response.ok) {
+    console.warn(
+      `[OSM] Overpass query failed with status ${response.status}: ${response.statusText}`
+    );
+    return [];
   }
 
-  return {
-    provider: "osm",
-    places,
-  };
+  const payload = (await response.json()) as { elements?: unknown[] };
+  return normalizeOSM(payload.elements ?? [], "osm");
 }

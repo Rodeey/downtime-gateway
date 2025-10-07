@@ -10,8 +10,8 @@
         "pathMode": "open-api"
       },
       "get": {
-        "summary": "Test DB",
-        "description": "",
+        "summary": "Supabase connectivity check",
+        "description": "Writes a heartbeat row to request_logs to verify Supabase credentials.",
         "x-zuplo-route": {
           "corsPolicy": "anything-goes",
           "handler": {
@@ -26,13 +26,44 @@
         "operationId": "test-db"
       }
     },
+    "/test-env": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "Inspect configured environment variables",
+        "x-zuplo-route": {
+          "corsPolicy": "anything-goes",
+          "handler": {
+            "export": "default",
+            "module": "$import(./modules/handlers/test-env)",
+            "options": {}
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Environment snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": ["string", "null"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/places": {
       "x-zuplo-path": {
         "pathMode": "open-api"
       },
       "get": {
-        "summary": "Get places near a location",
-        "description": "Returns nearby places using the provider waterfall OSM → Foursquare → Yelp → Google.",
+        "summary": "Discover downtime-friendly places",
+        "description": "Fetches normalized places grouped by category with caching, open-now filtering, and travel-time ranking.",
         "operationId": "getPlaces",
         "x-zuplo-route": {
           "corsPolicy": "anything-goes",
@@ -48,68 +79,124 @@
             "in": "query",
             "required": true,
             "schema": { "type": "number" },
-            "description": "Latitude of the origin point"
+            "description": "Latitude of the search origin"
           },
           {
             "name": "lng",
             "in": "query",
             "required": true,
             "schema": { "type": "number" },
-            "description": "Longitude of the origin point"
+            "description": "Longitude of the search origin"
           },
           {
             "name": "radius_m",
             "in": "query",
-            "required": true,
-            "schema": { "type": "integer", "minimum": 1 },
-            "description": "Search radius in meters"
+            "required": false,
+            "schema": { "type": "integer", "minimum": 100 },
+            "description": "Search radius in meters (defaults to 8000)"
           },
           {
             "name": "categories",
             "in": "query",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Comma separated list of categories or keywords"
-          },
-          {
-            "name": "limit",
-            "in": "query",
             "required": false,
-            "schema": { "type": "integer", "minimum": 1, "maximum": 50 },
-            "description": "Maximum number of places to return"
+            "schema": { "type": "string" },
+            "description": "Comma separated category tokens (food_drink, coffee_wfh, outdoors, etc.)"
           },
           {
             "name": "open_now",
             "in": "query",
             "required": false,
             "schema": { "type": "boolean" },
-            "description": "Filter to only show places that are currently open"
+            "description": "Override open-now filtering (defaults to true)"
+          },
+          {
+            "name": "force_refresh",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "boolean" },
+            "description": "Bypass cached results when true"
           }
         ],
         "responses": {
           "200": {
-            "description": "Success",
+            "description": "Successful search",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "places": {
+                    "source": { "type": "string", "enum": ["cache", "live"] },
+                    "places": { "type": "array", "items": { "type": "object" } },
+                    "categories_available": {
                       "type": "array",
-                      "items": { "type": "object" }
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": { "type": "string" },
+                          "label": { "type": "string" },
+                          "count": { "type": "integer" }
+                        },
+                        "required": ["key", "label", "count"]
+                      }
                     },
-                    "provider_used": { "type": "string" },
-                    "cache_hit": { "type": "boolean" }
-                  }
+                    "duration_ms": { "type": "number" },
+                    "error_code": { "type": ["string", "null"] },
+                    "error_message": { "type": ["string", "null"] }
+                  },
+                  "required": ["source", "places", "categories_available", "duration_ms"]
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid request"
+            "description": "Invalid query"
           },
           "500": {
             "description": "Server error"
+          }
+        }
+      }
+    },
+    "/categories": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "List configured category buckets",
+        "x-zuplo-route": {
+          "corsPolicy": "anything-goes",
+          "handler": {
+            "export": "default",
+            "module": "$import(./modules/handlers/categories-handler)",
+            "options": {}
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Category metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "categories": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": { "type": "string" },
+                          "label": { "type": "string" },
+                          "cap": { "type": "integer" },
+                          "minimum": { "type": "integer" }
+                        },
+                        "required": ["key", "label", "cap", "minimum"]
+                      }
+                    }
+                  },
+                  "required": ["categories"]
+                }
+              }
+            }
           }
         }
       }
@@ -120,7 +207,7 @@
       },
       "get": {
         "summary": "Geocode an address",
-        "description": "Resolves an address string to coordinates using OSM and Google fallbacks.",
+        "description": "Uses Geoapify to convert an address or place name into coordinates.",
         "operationId": "geocode",
         "x-zuplo-route": {
           "corsPolicy": "anything-goes",
@@ -136,18 +223,18 @@
             "in": "query",
             "required": true,
             "schema": { "type": "string" },
-            "description": "Address or place name to geocode"
+            "description": "Address or keyword to geocode"
           }
         ],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Geocode result"
           },
           "400": {
-            "description": "Invalid request"
+            "description": "Missing or invalid query"
           },
-          "500": {
-            "description": "Server error"
+          "502": {
+            "description": "Upstream provider error"
           }
         }
       }
@@ -158,7 +245,7 @@
       },
       "post": {
         "summary": "Estimate travel times",
-        "description": "Estimates travel times between an origin and multiple destinations.",
+        "description": "Returns cached or heuristic travel estimates between an origin and destinations.",
         "operationId": "travelTimes",
         "x-zuplo-route": {
           "corsPolicy": "anything-goes",
@@ -188,11 +275,11 @@
                     "items": {
                       "type": "object",
                       "properties": {
-                        "id": { "type": "string" },
+                        "place_id": { "type": "string" },
                         "lat": { "type": "number" },
                         "lng": { "type": "number" }
                       },
-                      "required": ["id", "lat", "lng"]
+                      "required": ["place_id", "lat", "lng"]
                     }
                   }
                 },
@@ -203,7 +290,39 @@
         },
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Travel estimates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "origin": {
+                      "type": "object",
+                      "properties": {
+                        "lat": { "type": "number" },
+                        "lng": { "type": "number" }
+                      },
+                      "required": ["lat", "lng"]
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "place_id": { "type": "string" },
+                          "walk_min": { "type": ["number", "null"] },
+                          "drive_min": { "type": ["number", "null"] },
+                          "source": { "type": "string", "enum": ["cache", "live"] }
+                        },
+                        "required": ["place_id", "source"]
+                      }
+                    },
+                    "source": { "type": "string", "enum": ["cache", "live"] }
+                  },
+                  "required": ["origin", "results", "source"]
+                }
+              }
+            }
           },
           "400": {
             "description": "Invalid request"

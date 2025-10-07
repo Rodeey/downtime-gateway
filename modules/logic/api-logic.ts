@@ -1,193 +1,324 @@
-import { searchWithFoursquare } from "./providers/foursquare";
-import { searchWithGoogle } from "./providers/google";
+import { filterPlaces } from "./filters";
+import { applyOpenNowRules, filterClosingSoon } from "./hours";
+import type { Place } from "./normalizer";
+import { pickPrimaryCategory } from "./category-priority";
+import {
+  categoryLabel,
+  resolveCategoryKey,
+  type CategoryBucket,
+} from "./category-map";
+import {
+  capByCategory,
+  summarizeCategories,
+  thresholdByCategory,
+  type CategorySummary,
+  annotateDistance,
+} from "./utils";
+import {
+  getCachedPlaces,
+  putCachedPlaces,
+  logRequest,
+  type CacheSource,
+  type PlaceCacheKey,
+} from "./supabase";
+import { addTravelTimes, type TravelOrigin } from "./travel";
+import { rankPlaces } from "./ranker";
 import { searchWithOsm } from "./providers/osm";
+import { searchWithFoursquare } from "./providers/foursquare";
 import { searchWithYelp } from "./providers/yelp";
-import type {
-  GeocodeResult,
-  PlacesQuery,
-  ProviderName,
-  ProviderSearchResult,
-  TravelTimesRequest,
-  TravelTimesResponse,
-} from "./types";
-import { calculateDistanceMeters } from "./utils";
 
-interface WaterfallResult extends ProviderSearchResult {
-  provider: ProviderName;
+export interface PlacesRequest {
+  lat: number;
+  lng: number;
+  radius_m: number;
+  categories: string[];
+  open_now?: boolean;
+  force_refresh?: boolean;
 }
 
-const providerSequence: ProviderName[] = [
-  "osm",
-  "foursquare",
-  "yelp",
-  "google",
-];
+export interface PlacesContext {
+  request?: Request;
+}
 
-type ProviderSearcher = (
-  query: PlacesQuery
-) => Promise<ProviderSearchResult | null>;
+interface InternalRequest extends PlacesRequest {
+  open_now: boolean;
+  force_refresh: boolean;
+}
 
-const searchers: Record<ProviderName, ProviderSearcher> = {
-  osm: searchWithOsm,
-  foursquare: searchWithFoursquare,
-  yelp: searchWithYelp,
-  google: searchWithGoogle,
+interface CategoryGatherResult {
+  bucket: CategoryBucket;
+  places: Place[];
+  source: CacheSource;
+  provider_used: string;
+  duration_ms: number;
+}
+
+export interface PlacesResponse {
+  source: CacheSource;
+  places: Place[];
+  categories_available: CategorySummary[];
+  duration_ms: number;
+  error_code: string | null;
+  error_message: string | null;
+}
+
+const DEFAULT_CATEGORY: CategoryBucket = "food_drink";
+
+const YELP_CATEGORY_MAP: Record<CategoryBucket, string[]> = {
+  food_drink: ["restaurants", "food"],
+  coffee_wfh: ["coffee", "cafes", "coffeeroasteries"],
+  outdoors: ["parks", "hiking", "recreation"],
+  arts_culture: ["museums", "galleries", "theater"],
+  shops_services: ["shopping", "fashion"],
+  wellness: ["health", "beautysvc", "fitness"],
+  general: ["localflavor"],
 };
 
-export async function getPlaces(
-  query: PlacesQuery
-): Promise<WaterfallResult> {
-  const errors: Array<{ provider: ProviderName; error: unknown }> = [];
+const FSQ_CATEGORY_MAP: Record<CategoryBucket, string[]> = {
+  food_drink: ["4d4b7105d754a06374d81259"],
+  coffee_wfh: ["4bf58dd8d48988d1e0931735", "4bf58dd8d48988d1c9941735"],
+  outdoors: ["4d4b7105d754a06377d81259"],
+  arts_culture: ["4d4b7104d754a06370d81259"],
+  shops_services: ["4d4b7105d754a06378d81259"],
+  wellness: ["4bf58dd8d48988d104941735"],
+  general: ["4d4b7105d754a06376d81259"],
+};
 
-  for (const provider of providerSequence) {
-    const searcher = searchers[provider];
-    try {
-      const result = await searcher(query);
-      if (result && result.places.length > 0) {
-        return {
-          provider,
-          places: result.places,
-          cacheHit: result.cacheHit,
-        };
+function normalizeRequest(params: PlacesRequest): InternalRequest {
+  return {
+    ...params,
+    radius_m: Number.isFinite(params.radius_m)
+      ? Math.max(100, Math.min(params.radius_m, 40_000))
+      : 8_000,
+    open_now: params.open_now ?? true,
+    force_refresh: params.force_refresh ?? false,
+  };
+}
+
+function resolveRequestedBuckets(categories: string[]): CategoryBucket[] {
+  const buckets = new Set<CategoryBucket>();
+  for (const token of categories) {
+    if (typeof token !== "string") {
+      continue;
+    }
+    buckets.add(resolveCategoryKey(token));
+  }
+  if (buckets.size === 0) {
+    buckets.add(DEFAULT_CATEGORY);
+  }
+  return Array.from(buckets);
+}
+
+function sanitizePlace(place: Place, bucket: CategoryBucket): Place {
+  return {
+    ...place,
+    category_bucket: bucket,
+    category_label: categoryLabel(bucket),
+    primary_category: pickPrimaryCategory(place.categories, {
+      name: place.name,
+      fallback: "general",
+    }),
+    travel: { ...place.travel },
+    open_now: undefined,
+    closing_soon: undefined,
+  };
+}
+
+function clonePlaces(places: Place[], bucket: CategoryBucket): Place[] {
+  return places.map((place) => sanitizePlace(place, bucket));
+}
+
+function dedupeByPlaceId(places: Place[]): Place[] {
+  const deduped = new Map<string, Place>();
+  for (const place of places) {
+    if (!deduped.has(place.place_id)) {
+      deduped.set(place.place_id, place);
+    }
+  }
+  return Array.from(deduped.values());
+}
+
+async function runPipeline(
+  places: Place[],
+  bucket: CategoryBucket,
+  request: InternalRequest,
+  origin: TravelOrigin
+): Promise<Place[]> {
+  const annotated = places.map((place) =>
+    annotateDistance(place, request.lat, request.lng)
+  );
+  const filtered = filterPlaces(annotated);
+  const open = applyOpenNowRules(filtered);
+  const withoutClosingSoon = filterClosingSoon(open);
+  const cap = capByCategory[bucket];
+  const preRank = withoutClosingSoon.slice(0, Math.max(cap * 2, cap));
+  const withTravel = await addTravelTimes(preRank, origin, {
+    forceRefresh: request.force_refresh,
+  });
+  const ranked = rankPlaces(withTravel);
+  return ranked.slice(0, cap);
+}
+
+interface ProviderFetchResult {
+  places: Place[];
+  providers: string[];
+}
+
+async function fetchForCategory(
+  bucket: CategoryBucket,
+  request: InternalRequest
+): Promise<ProviderFetchResult> {
+  const limit = capByCategory[bucket];
+  const threshold = thresholdByCategory[bucket];
+  const providers: string[] = [];
+  const aggregated: Place[] = [];
+
+  if (bucket === "outdoors") {
+    const osmResults = await searchWithOsm({
+      lat: request.lat,
+      lng: request.lng,
+      radius_m: request.radius_m,
+      limit,
+    });
+    if (osmResults.length > 0) {
+      aggregated.push(...osmResults);
+      providers.push("osm");
+    }
+    return { places: aggregated, providers };
+  }
+
+  const yelpCategories = YELP_CATEGORY_MAP[bucket] ?? [];
+  const yelpResults = await searchWithYelp({
+    lat: request.lat,
+    lng: request.lng,
+    radius_m: request.radius_m,
+    limit,
+    categories: yelpCategories,
+    open_now: request.open_now,
+  });
+  if (yelpResults.length > 0) {
+    aggregated.push(...yelpResults);
+    providers.push("yelp");
+  }
+
+  if (aggregated.length < threshold) {
+    const fsqCategories = FSQ_CATEGORY_MAP[bucket] ?? [];
+    const fsqResults = await searchWithFoursquare({
+      lat: request.lat,
+      lng: request.lng,
+      radius_m: request.radius_m,
+      limit,
+      categories: fsqCategories,
+      open_now: request.open_now,
+    });
+    if (fsqResults.length > 0) {
+      providers.push("foursquare");
+      const existing = new Set(aggregated.map((place) => place.place_id));
+      for (const place of fsqResults) {
+        if (!existing.has(place.place_id)) {
+          aggregated.push(place);
+        }
       }
-    } catch (error) {
-      console.warn(`[Gateway] Provider ${provider} failed`, error);
-      errors.push({ provider, error });
     }
   }
 
-  const error = new Error(
-    `No providers returned results. Failures: ${errors
-      .map((entry) => `${entry.provider}: ${String(entry.error)}`)
-      .join("; ")}`
-  );
-  throw error;
+  return { places: aggregated, providers };
 }
 
-export async function geocode(query: string): Promise<GeocodeResult> {
-  const normalized = query.trim();
-  if (!normalized) {
-    throw new Error("Query cannot be empty");
-  }
+async function gatherForCategory(
+  bucket: CategoryBucket,
+  request: InternalRequest,
+  origin: TravelOrigin,
+  context: PlacesContext
+): Promise<CategoryGatherResult> {
+  const started = Date.now();
+  const cacheKey: PlaceCacheKey = {
+    lat: request.lat,
+    lng: request.lng,
+    radius_m: request.radius_m,
+    category: bucket,
+    open_now: request.open_now,
+  };
 
-  const nominatim = new URL("https://nominatim.openstreetmap.org/search");
-  nominatim.searchParams.set("q", normalized);
-  nominatim.searchParams.set("format", "jsonv2");
-  nominatim.searchParams.set("limit", "1");
+  let source: CacheSource = "live";
+  let providerUsed = "none";
+  let basePlaces: Place[] | null = null;
 
-  const osmResponse = await fetch(nominatim, {
-    headers: {
-      "User-Agent": "Downtime-Gateway/1.0 (+https://github.com/zuplo)",
-    },
-  });
-
-  if (osmResponse.ok) {
-    const payload = (await osmResponse.json()) as Array<{
-      lat: string;
-      lon: string;
-      display_name: string;
-    }>;
-
-    if (payload.length > 0) {
-      const [result] = payload;
-      return {
-        location: {
-          lat: Number.parseFloat(result.lat),
-          lng: Number.parseFloat(result.lon),
-        },
-        address: result.display_name,
-        provider: "osm",
-      };
+  if (!request.force_refresh) {
+    const cached = await getCachedPlaces(cacheKey);
+    if (cached && cached.length > 0) {
+      basePlaces = clonePlaces(cached, bucket);
+      providerUsed = "cache";
+      source = "cache";
     }
   }
 
-  const googleKey = (() => {
-    try {
-      return (
-        zuplo.env.GOOGLE_GEOCODING_API_KEY ??
-        zuplo.env.GOOGLE_PLACES_API_KEY ??
-        zuplo.env.GOOGLE_MAPS_API_KEY ??
-        null
-      );
-    } catch (error) {
-      console.warn("[Gateway] Google geocoding key missing", error);
-      return null;
-    }
-  })();
-
-  if (!googleKey) {
-    throw new Error("No geocoding providers returned results");
+  if (!basePlaces) {
+    const fetched = await fetchForCategory(bucket, request);
+    basePlaces = clonePlaces(fetched.places, bucket);
+    providerUsed = fetched.providers.join(",") || "none";
+    await putCachedPlaces(cacheKey, basePlaces, {
+      provider: providerUsed,
+      count: basePlaces.length,
+      duration_ms: Date.now() - started,
+    });
   }
 
-  const googleUrl = new URL(
-    "https://maps.googleapis.com/maps/api/geocode/json"
-  );
-  googleUrl.searchParams.set("address", normalized);
-  googleUrl.searchParams.set("key", googleKey);
+  const processed = await runPipeline(basePlaces, bucket, request, origin);
+  const duration_ms = Date.now() - started;
 
-  const googleResponse = await fetch(googleUrl);
-  if (!googleResponse.ok) {
-    throw new Error(
-      `Google geocode failed with status ${googleResponse.status}`
-    );
-  }
-
-  const googlePayload = (await googleResponse.json()) as {
-    results: Array<{
-      geometry: { location: { lat: number; lng: number } };
-      formatted_address: string;
-    }>;
-    status: string;
-  };
-
-  if (googlePayload.status !== "OK" || googlePayload.results.length === 0) {
-    throw new Error(
-      `Google geocode returned status ${googlePayload.status}`
-    );
-  }
-
-  const [googleResult] = googlePayload.results;
-  return {
-    location: googleResult.geometry.location,
-    address: googleResult.formatted_address,
-    provider: "google",
-  };
-}
-
-export function estimateTravelTimes(
-  request: TravelTimesRequest
-): TravelTimesResponse {
-  const AVERAGE_SPEEDS = {
-    driving: 50_000 / 60, // 50 km/h in meters per minute
-    walking: 5_000 / 60, // 5 km/h in meters per minute
-    biking: 15_000 / 60, // 15 km/h in meters per minute
-  } as const;
-
-  const results = request.destinations.map((destination) => {
-    const distanceMeters = calculateDistanceMeters(
-      request.origin.lat,
-      request.origin.lng,
-      destination.lat,
-      destination.lng
-    );
-
-    return {
-      id: destination.id,
-      distanceMeters,
-      drivingMinutes: Number.parseFloat(
-        (distanceMeters / AVERAGE_SPEEDS.driving).toFixed(2)
-      ),
-      walkingMinutes: Number.parseFloat(
-        (distanceMeters / AVERAGE_SPEEDS.walking).toFixed(2)
-      ),
-      bikingMinutes: Number.parseFloat(
-        (distanceMeters / AVERAGE_SPEEDS.biking).toFixed(2)
-      ),
-    };
+  await logRequest({
+    category: bucket,
+    provider_used: providerUsed,
+    source,
+    count: processed.length,
+    duration_ms,
+    lat: request.lat,
+    lng: request.lng,
+    radius_m: request.radius_m,
+    open_now: request.open_now,
+    force_refresh: request.force_refresh,
+    request: context.request,
   });
 
   return {
-    results,
-    provider: "heuristic",
+    bucket,
+    places: processed,
+    source,
+    provider_used: providerUsed,
+    duration_ms,
+  };
+}
+
+export async function getPlaces(
+  params: PlacesRequest,
+  context: PlacesContext = {}
+): Promise<PlacesResponse> {
+  const started = Date.now();
+  const request = normalizeRequest(params);
+  const buckets = resolveRequestedBuckets(request.categories ?? []);
+  const origin: TravelOrigin = { lat: request.lat, lng: request.lng };
+
+  const results = await Promise.all(
+    buckets.map((bucket) =>
+      gatherForCategory(bucket, request, origin, context)
+    )
+  );
+
+  const combined = dedupeByPlaceId(results.flatMap((result) => result.places));
+  const ranked = rankPlaces(combined);
+  const categories_available = summarizeCategories(ranked);
+  const duration_ms = Date.now() - started;
+  const source: CacheSource = results.every((result) => result.source === "cache")
+    ? "cache"
+    : "live";
+
+  return {
+    source,
+    places: ranked,
+    categories_available,
+    duration_ms,
+    error_code: null,
+    error_message: null,
   };
 }
