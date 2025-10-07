@@ -3,7 +3,7 @@ const KEYS = [
   "SUPABASEKEY",
   "FOURSQUARE_API_KEY",
   "YELP_API_KEY",
-  "GEOAPIFY_API_KEY",
+  "GEOAPIFY_KEY",
 ];
 
 function readEnv(key: string): string | null {
