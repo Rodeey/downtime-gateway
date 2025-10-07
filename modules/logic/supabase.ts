@@ -55,6 +55,7 @@ let cachedClient: SupabaseClient | null | undefined;
 let cachedCredentials: { url: string; key: string } | null = null;
 let warnedMissingCredentials = false;
 const requestContextCache = new WeakMap<Request, Promise<RequestContext>>();
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function readEnv(key: string, env?: EnvSource): string | null {
   if (!env) {
@@ -283,7 +284,9 @@ export async function getCachedPlaces(
   const query_hash = makeQueryHash(key);
   const { data, error } = await client
     .from("cached_places")
-    .select("places")
+    .select<{ places: unknown; expires_at: string | null }>(
+      "places, expires_at"
+    )
     .eq("query_hash", query_hash)
     .maybeSingle();
 
@@ -293,6 +296,18 @@ export async function getCachedPlaces(
   }
 
   if (!data || !data.places) {
+    return null;
+  }
+
+  const expiresAt = data.expires_at
+    ? Date.parse(data.expires_at as string)
+    : Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    try {
+      await client.from("cached_places").delete().eq("query_hash", query_hash);
+    } catch (cleanupError) {
+      console.warn("[Supabase] Failed to clear expired cache entry", cleanupError);
+    }
     return null;
   }
   return hydratePlaces(data.places);
@@ -323,6 +338,7 @@ export async function putCachedPlaces(
       duration_ms: meta.duration_ms ?? null,
       places: payload,
       updated_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + CACHE_TTL_MS).toISOString(),
     },
     { onConflict: "query_hash" }
   );

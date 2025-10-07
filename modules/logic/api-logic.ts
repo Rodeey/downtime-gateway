@@ -53,12 +53,14 @@ interface CategoryGatherResult {
   source: CacheSource;
   provider_used: string;
   duration_ms: number;
+  provider_counts: Record<string, number>;
 }
 
 export interface PlacesResponse {
   source: CacheSource;
   places: Place[];
   categories_available: CategorySummary[];
+  provider_counts: Record<string, number>;
   duration_ms: number;
   error_code: string | null;
   error_message: string | null;
@@ -85,6 +87,15 @@ const FSQ_CATEGORY_MAP: Record<CategoryBucket, string[]> = {
   wellness: ["4bf58dd8d48988d104941735"],
   general: ["4d4b7105d754a06376d81259"],
 };
+
+function countProviders(places: Place[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const place of places) {
+    const key = place.provider ?? "unknown";
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
 
 function normalizeRequest(params: PlacesRequest): InternalRequest {
   return {
@@ -165,7 +176,7 @@ async function runPipeline(
 
 interface ProviderFetchResult {
   places: Place[];
-  providers: string[];
+  providersUsed: string[];
 }
 
 async function fetchForCategory(
@@ -175,8 +186,21 @@ async function fetchForCategory(
 ): Promise<ProviderFetchResult> {
   const limit = capByCategory[bucket];
   const threshold = thresholdByCategory[bucket];
-  const providers: string[] = [];
-  const aggregated: Place[] = [];
+  const aggregated = new Map<string, Place>();
+  const providersUsed: string[] = [];
+
+  const addPlaces = (provider: string, places: Place[]): void => {
+    let added = 0;
+    for (const place of places) {
+      if (!aggregated.has(place.place_id)) {
+        aggregated.set(place.place_id, place);
+        added += 1;
+      }
+    }
+    if (added > 0) {
+      providersUsed.push(provider);
+    }
+  };
 
   if (bucket === "outdoors") {
     const osmResults = await searchWithOsm({
@@ -185,31 +209,10 @@ async function fetchForCategory(
       radius_m: request.radius_m,
       limit,
     });
-    if (osmResults.length > 0) {
-      aggregated.push(...osmResults);
-      providers.push("osm");
-    }
-    return { places: aggregated, providers };
+    addPlaces("osm", osmResults);
   }
 
-  const yelpCategories = YELP_CATEGORY_MAP[bucket] ?? [];
-  const yelpResults = await searchWithYelp(
-    {
-      lat: request.lat,
-      lng: request.lng,
-      radius_m: request.radius_m,
-      limit,
-      categories: yelpCategories,
-      open_now: request.open_now,
-    },
-    env
-  );
-  if (yelpResults.length > 0) {
-    aggregated.push(...yelpResults);
-    providers.push("yelp");
-  }
-
-  if (aggregated.length < threshold) {
+  if (aggregated.size < threshold) {
     const fsqCategories = FSQ_CATEGORY_MAP[bucket] ?? [];
     const fsqResults = await searchWithFoursquare(
       {
@@ -222,18 +225,29 @@ async function fetchForCategory(
       },
       env
     );
-    if (fsqResults.length > 0) {
-      providers.push("foursquare");
-      const existing = new Set(aggregated.map((place) => place.place_id));
-      for (const place of fsqResults) {
-        if (!existing.has(place.place_id)) {
-          aggregated.push(place);
-        }
-      }
-    }
+    addPlaces("foursquare", fsqResults);
   }
 
-  return { places: aggregated, providers };
+  if (aggregated.size < threshold) {
+    const yelpCategories = YELP_CATEGORY_MAP[bucket] ?? [];
+    const yelpResults = await searchWithYelp(
+      {
+        lat: request.lat,
+        lng: request.lng,
+        radius_m: request.radius_m,
+        limit,
+        categories: yelpCategories,
+        open_now: request.open_now,
+      },
+      env
+    );
+    addPlaces("yelp", yelpResults);
+  }
+
+  return {
+    places: Array.from(aggregated.values()),
+    providersUsed,
+  };
 }
 
 async function gatherForCategory(
@@ -267,7 +281,7 @@ async function gatherForCategory(
   if (!basePlaces) {
     const fetched = await fetchForCategory(bucket, request, context.env);
     basePlaces = clonePlaces(fetched.places, bucket);
-    providerUsed = fetched.providers.join(",") || "none";
+    providerUsed = fetched.providersUsed.join(",") || "none";
     await putCachedPlaces(
       cacheKey,
       basePlaces,
@@ -288,6 +302,7 @@ async function gatherForCategory(
     context.env
   );
   const duration_ms = Date.now() - started;
+  const processedCounts = countProviders(processed);
 
   await logRequest(
     {
@@ -312,6 +327,7 @@ async function gatherForCategory(
     source,
     provider_used: providerUsed,
     duration_ms,
+    provider_counts: processedCounts,
   };
 }
 
@@ -333,6 +349,7 @@ export async function getPlaces(
   const combined = dedupeByPlaceId(results.flatMap((result) => result.places));
   const ranked = rankPlaces(combined);
   const categories_available = summarizeCategories(ranked);
+  const provider_counts = countProviders(ranked);
   const duration_ms = Date.now() - started;
   const source: CacheSource = results.every((result) => result.source === "cache")
     ? "cache"
@@ -342,6 +359,7 @@ export async function getPlaces(
     source,
     places: ranked,
     categories_available,
+    provider_counts,
     duration_ms,
     error_code: null,
     error_message: null,

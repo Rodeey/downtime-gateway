@@ -11,14 +11,11 @@ const SUPABASEURL = zuplo.env.SUPABASEURL;
 const SUPABASEKEY = zuplo.env.SUPABASEKEY;
 const FOURSQUARE_API_KEY = zuplo.env.FOURSQUARE_API_KEY;
 const YELP_API_KEY = zuplo.env.YELP_API_KEY;
-const GEOAPIFY_KEY = zuplo.env.GEOAPIFY_KEY;
-
 const KEYS = [
   "SUPABASEURL",
   "SUPABASEKEY",
   "FOURSQUARE_API_KEY",
   "YELP_API_KEY",
-  "GEOAPIFY_KEY",
 ];
 
 function hasEnv(key: string, ctxEnv?: EnvSource): boolean {

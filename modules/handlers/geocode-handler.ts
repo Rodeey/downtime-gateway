@@ -1,37 +1,23 @@
-import { withUserAgent } from "../logic/utils";
 import type { HandlerContext } from "./context";
+import { withUserAgent } from "../logic/utils";
 
-interface GeoapifyFeature {
-  properties?: {
-    lat?: number;
-    lon?: number;
-    formatted?: string;
-  };
+interface NominatimResult {
+  lat?: string;
+  lon?: string;
+  display_name?: string;
 }
 
-interface GeoapifyResponse {
-  features?: GeoapifyFeature[];
-}
-
-function getApiKey(): string | null {
-  try {
-    const value = (zuplo.env as Record<string, unknown>).GEOAPIFY_KEY;
-    if (typeof value === "string" && value.length > 0) {
-      return value;
-    }
-  } catch (error) {
-    console.warn("[Geocode] Unable to read GEOAPIFY_KEY", error);
+function parseCoordinate(value: string | undefined): number | null {
+  if (!value) {
+    return null;
   }
-  if (typeof process !== "undefined" && process.env.GEOAPIFY_KEY) {
-    return process.env.GEOAPIFY_KEY;
-  }
-  console.warn("[Geocode] Unable to read GEOAPIFY_KEY");
-  return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export default async function handler(
   request: Request,
-  ctx: HandlerContext
+  _ctx: HandlerContext
 ): Promise<Response> {
   const url = new URL(request.url);
   const query = url.searchParams.get("query")?.trim();
@@ -43,32 +29,38 @@ export default async function handler(
     });
   }
 
-  const apiKey = getApiKey(ctx);
-  if (!apiKey) {
-    return new Response(JSON.stringify({ error: "Geocoding provider not configured" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+  const nominatimUrl = new URL("https://nominatim.openstreetmap.org/search");
+  nominatimUrl.searchParams.set("q", query);
+  nominatimUrl.searchParams.set("format", "json");
+  nominatimUrl.searchParams.set("limit", "1");
+  nominatimUrl.searchParams.set("addressdetails", "0");
 
-  const geoapifyUrl = new URL("https://api.geoapify.com/v1/geocode/search");
-  geoapifyUrl.searchParams.set("text", query);
-  geoapifyUrl.searchParams.set("limit", "1");
-  geoapifyUrl.searchParams.set("apiKey", apiKey);
+  const response = await fetch(
+    nominatimUrl.toString(),
+    withUserAgent({
+      headers: {
+        "Accept": "application/json",
+      },
+    })
+  );
 
-  const response = await fetch(geoapifyUrl.toString(), withUserAgent());
   if (!response.ok) {
-    console.error("[Geocode] Geoapify request failed", response.status, response.statusText);
+    console.error(
+      "[Geocode] Nominatim request failed",
+      response.status,
+      response.statusText
+    );
     return new Response(JSON.stringify({ error: "Unable to geocode query" }), {
       status: 502,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  const payload = (await response.json()) as GeoapifyResponse;
-  const [feature] = payload.features ?? [];
-  const lat = feature?.properties?.lat;
-  const lon = feature?.properties?.lon;
+  const payload = (await response.json()) as NominatimResult[];
+  const [result] = payload;
+
+  const lat = parseCoordinate(result?.lat);
+  const lon = parseCoordinate(result?.lon);
 
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
     return new Response(JSON.stringify({ error: "No results found" }), {
@@ -80,13 +72,13 @@ export default async function handler(
   return new Response(
     JSON.stringify({
       location: { lat, lng: lon },
-      address: feature?.properties?.formatted ?? query,
-      provider: "geoapify",
+      address: result?.display_name ?? query,
+      provider: "nominatim",
     }),
     {
       headers: {
         "Content-Type": "application/json",
-        "Cache-Control": "public, max-age=3600",
+        "Cache-Control": "public, max-age=86400",
       },
     }
   );

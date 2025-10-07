@@ -63,6 +63,7 @@ export default async function handler(
         source: result.source,
         places: result.places,
         categories_available: result.categories_available,
+        provider_counts: result.provider_counts,
         duration_ms: result.duration_ms,
         error_code: result.error_code,
         error_message: result.error_message,
