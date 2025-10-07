@@ -1,5 +1,6 @@
 import { normalizeFSQ, type Place } from "../normalizer";
 import { withUserAgent } from "../utils";
+import type { EnvSource } from "../env";
 
 const BASE_URL = "https://api.foursquare.com/v3/places/search";
 
@@ -25,9 +26,10 @@ function getApiKey(): string | null {
 }
 
 export async function searchWithFoursquare(
-  query: FoursquareQuery
+  query: FoursquareQuery,
+  env?: EnvSource
 ): Promise<Place[]> {
-  const apiKey = getApiKey();
+  const apiKey = getApiKey(env);
   if (!apiKey) {
     return [];
   }

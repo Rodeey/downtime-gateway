@@ -1,5 +1,6 @@
 import { normalizeYelp, type Place } from "../normalizer";
 import { withUserAgent } from "../utils";
+import type { EnvSource } from "../env";
 
 const BASE_URL = "https://api.yelp.com/v3/businesses/search";
 
@@ -24,8 +25,11 @@ function getApiKey(): string | null {
   return null;
 }
 
-export async function searchWithYelp(query: YelpQuery): Promise<Place[]> {
-  const apiKey = getApiKey();
+export async function searchWithYelp(
+  query: YelpQuery,
+  env?: EnvSource
+): Promise<Place[]> {
+  const apiKey = getApiKey(env);
   if (!apiKey) {
     return [];
   }

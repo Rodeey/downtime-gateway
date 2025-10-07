@@ -1,3 +1,6 @@
+import type { EnvSource } from "../logic/env";
+import type { HandlerContext } from "./context";
+
 const KEYS = [
   "SUPABASEURL",
   "SUPABASEKEY",
@@ -26,7 +29,11 @@ function hasEnv(key: string): boolean {
   return false;
 }
 
-export default async function handler(): Promise<Response> {
+export default async function handler(
+  _request: Request,
+  ctx: HandlerContext
+): Promise<Response> {
+  const env = ctx?.env;
   const result = Object.fromEntries(
     KEYS.map((key) => {
       return [key, hasEnv(key)];

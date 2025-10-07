@@ -1,4 +1,5 @@
 import { withUserAgent } from "../logic/utils";
+import type { HandlerContext } from "./context";
 
 interface GeoapifyFeature {
   properties?: {
@@ -24,10 +25,14 @@ function getApiKey(): string | null {
   if (typeof process !== "undefined" && process.env.GEOAPIFY_KEY) {
     return process.env.GEOAPIFY_KEY;
   }
+  console.warn("[Geocode] Unable to read GEOAPIFY_KEY");
   return null;
 }
 
-export default async function handler(request: Request): Promise<Response> {
+export default async function handler(
+  request: Request,
+  ctx: HandlerContext
+): Promise<Response> {
   const url = new URL(request.url);
   const query = url.searchParams.get("query")?.trim();
 
@@ -38,7 +43,7 @@ export default async function handler(request: Request): Promise<Response> {
     });
   }
 
-  const apiKey = getApiKey();
+  const apiKey = getApiKey(ctx);
   if (!apiKey) {
     return new Response(JSON.stringify({ error: "Geocoding provider not configured" }), {
       status: 500,
