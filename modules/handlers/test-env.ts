@@ -1,6 +1,3 @@
-import { readEnvValue } from "../logic/env";
-import type { HandlerContext } from "./context";
-
 const KEYS = [
   "SUPABASEURL",
   "SUPABASEKEY",
@@ -9,12 +6,31 @@ const KEYS = [
   "GEOAPIFY_KEY",
 ];
 
-export default async function handler(
-  _request: Request,
-  ctx: HandlerContext
-): Promise<Response> {
+function hasEnv(key: string): boolean {
+  try {
+    const value = (zuplo.env as Record<string, unknown>)[key];
+    if (typeof value === "string" && value.length > 0) {
+      return true;
+    }
+  } catch (error) {
+    console.warn(`[test-env] Unable to read ${key}`, error);
+  }
+  if (
+    typeof process !== "undefined" &&
+    process.env &&
+    typeof process.env[key] === "string" &&
+    process.env[key]!.length > 0
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export default async function handler(): Promise<Response> {
   const result = Object.fromEntries(
-    KEYS.map((key) => [key, readEnvValue(ctx?.env, key) !== null])
+    KEYS.map((key) => {
+      return [key, hasEnv(key)];
+    })
   );
 
   return new Response(JSON.stringify(result), {

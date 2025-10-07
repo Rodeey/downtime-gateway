@@ -1,6 +1,4 @@
-import { readEnvValue } from "../logic/env";
 import { withUserAgent } from "../logic/utils";
-import type { HandlerContext } from "./context";
 
 interface GeoapifyFeature {
   properties?: {
@@ -14,19 +12,22 @@ interface GeoapifyResponse {
   features?: GeoapifyFeature[];
 }
 
-function getApiKey(ctx: HandlerContext | undefined): string | null {
-  const value = readEnvValue(ctx?.env, "GEOAPIFY_KEY");
-  if (value) {
-    return value;
+function getApiKey(): string | null {
+  try {
+    const value = (zuplo.env as Record<string, unknown>).GEOAPIFY_KEY;
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  } catch (error) {
+    console.warn("[Geocode] Unable to read GEOAPIFY_KEY", error);
   }
-  console.warn("[Geocode] Unable to read GEOAPIFY_KEY");
+  if (typeof process !== "undefined" && process.env.GEOAPIFY_KEY) {
+    return process.env.GEOAPIFY_KEY;
+  }
   return null;
 }
 
-export default async function handler(
-  request: Request,
-  ctx: HandlerContext
-): Promise<Response> {
+export default async function handler(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const query = url.searchParams.get("query")?.trim();
 
@@ -37,7 +38,7 @@ export default async function handler(
     });
   }
 
-  const apiKey = getApiKey(ctx);
+  const apiKey = getApiKey();
   if (!apiKey) {
     return new Response(JSON.stringify({ error: "Geocoding provider not configured" }), {
       status: 500,

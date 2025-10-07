@@ -1,6 +1,5 @@
 import { CATEGORY_LABELS, type CategoryBucket } from "../logic/category-map";
 import { capByCategory, thresholdByCategory } from "../logic/utils";
-import type { HandlerContext } from "./context";
 
 interface CategorySummaryResponse {
   key: CategoryBucket;
@@ -9,10 +8,7 @@ interface CategorySummaryResponse {
   minimum: number;
 }
 
-export default async function handler(
-  _request: Request,
-  _ctx: HandlerContext
-): Promise<Response> {
+export default async function handler(): Promise<Response> {
   const categories: CategorySummaryResponse[] = Object.keys(
     capByCategory
   ).map((key) => {

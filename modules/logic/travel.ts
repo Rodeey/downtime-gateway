@@ -6,7 +6,6 @@ import {
   type TravelCacheRecord,
   type TravelCacheKey,
 } from "./supabase";
-import type { EnvSource } from "./env";
 
 export interface TravelOrigin {
   lat: number;
@@ -15,7 +14,6 @@ export interface TravelOrigin {
 
 export interface AddTravelTimesOptions {
   forceRefresh?: boolean;
-  env?: EnvSource;
 }
 
 export function haversineKm(
@@ -53,11 +51,7 @@ export async function addTravelTimes(
 
   const cached = options.forceRefresh
     ? new Map<string, TravelCacheRecord>()
-    : await getCachedTravelTimes(
-        key,
-        places.map((place) => place.place_id),
-        options.env
-      );
+    : await getCachedTravelTimes(key, places.map((place) => place.place_id));
 
   const updates: TravelCacheRecord[] = [];
 
@@ -88,7 +82,7 @@ export async function addTravelTimes(
   }
 
   if (updates.length > 0) {
-    await putCachedTravelTimes(key, updates, options.env);
+    await putCachedTravelTimes(key, updates);
   }
 
   return places;

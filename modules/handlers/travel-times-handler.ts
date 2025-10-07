@@ -5,7 +5,6 @@ import {
   type TravelCacheKey,
 } from "../logic/supabase";
 import { haversineKm } from "../logic/travel";
-import type { HandlerContext } from "./context";
 
 interface TravelTimesRequestBody {
   origin: { lat: number; lng: number };
@@ -75,10 +74,7 @@ function estimateTravelMinutes(
   return { walk_min: walkMinutes, drive_min: driveMinutes };
 }
 
-export default async function handler(
-  request: Request,
-  ctx: HandlerContext
-): Promise<Response> {
+export default async function handler(request: Request): Promise<Response> {
   if (request.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
@@ -92,8 +88,7 @@ export default async function handler(
     const cacheKey: TravelCacheKey = { lat: origin.lat, lng: origin.lng };
     const cached = await getCachedTravelTimes(
       cacheKey,
-      destinations.map((destination) => destination.place_id),
-      ctx?.env
+      destinations.map((destination) => destination.place_id)
     );
 
     const updates: TravelCacheRecord[] = [];
@@ -122,7 +117,7 @@ export default async function handler(
     });
 
     if (updates.length > 0) {
-      await putCachedTravelTimes(cacheKey, updates, ctx?.env);
+      await putCachedTravelTimes(cacheKey, updates);
     }
 
     const overallSource = results.every((result) => result.source === "cache")
