@@ -1,6 +1,18 @@
 import type { EnvSource } from "../logic/env";
 import type { HandlerContext } from "./context";
 
+// Read Zuplo environment variables at module initialization time.
+// This ensures the global `zuplo.env` is accessed when the module loads
+// (the pattern that works in `modules/test-db.ts`).
+
+declare const zuplo: any;
+
+const SUPABASEURL = zuplo.env.SUPABASEURL;
+const SUPABASEKEY = zuplo.env.SUPABASEKEY;
+const FOURSQUARE_API_KEY = zuplo.env.FOURSQUARE_API_KEY;
+const YELP_API_KEY = zuplo.env.YELP_API_KEY;
+const GEOAPIFY_KEY = zuplo.env.GEOAPIFY_KEY;
+
 const KEYS = [
   "SUPABASEURL",
   "SUPABASEKEY",
@@ -9,15 +21,22 @@ const KEYS = [
   "GEOAPIFY_KEY",
 ];
 
-function hasEnv(key: string): boolean {
+function hasEnv(key: string, ctxEnv?: EnvSource): boolean {
   try {
-    const value = (zuplo.env as Record<string, unknown>)[key];
-    if (typeof value === "string" && value.length > 0) {
+    // prefer the actual zuplo.env variable read at module init
+    const moduleValue = (zuplo.env as Record<string, unknown>)[key];
+    if (typeof moduleValue === "string" && moduleValue.length > 0) {
       return true;
     }
-  } catch (error) {
-    console.warn(`[test-env] Unable to read ${key}`, error);
+  } catch (_) {
+    // ignore
   }
+
+  // fallback to context-provided env (from origin/main changes)
+  if (ctxEnv && typeof ctxEnv[key] === "string" && ctxEnv[key]!.length > 0) {
+    return true;
+  }
+
   if (
     typeof process !== "undefined" &&
     process.env &&
@@ -36,7 +55,7 @@ export default async function handler(
   const env = ctx?.env;
   const result = Object.fromEntries(
     KEYS.map((key) => {
-      return [key, hasEnv(key)];
+      return [key, hasEnv(key, env)];
     })
   );
 
@@ -45,5 +64,5 @@ export default async function handler(
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
     },
-  });
+    });
 }
