@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "version": "1.0.0",
-    "title": "My Zuplo API"
+    "title": "Downtime Gateway API"
   },
   "paths": {
     "/test-db": {
@@ -23,7 +23,198 @@
             "inbound": []
           }
         },
-        "operationId": "new-route-4808ebd9"
+        "operationId": "test-db"
+      }
+    },
+    "/places": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "Get places near a location",
+        "description": "Returns nearby places using the provider waterfall OSM → Foursquare → Yelp → Google.",
+        "operationId": "getPlaces",
+        "x-zuplo-route": {
+          "corsPolicy": "anything-goes",
+          "handler": {
+            "export": "default",
+            "module": "$import(./modules/handlers/places-handler)",
+            "options": {}
+          }
+        },
+        "parameters": [
+          {
+            "name": "lat",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "number" },
+            "description": "Latitude of the origin point"
+          },
+          {
+            "name": "lng",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "number" },
+            "description": "Longitude of the origin point"
+          },
+          {
+            "name": "radius_m",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 1 },
+            "description": "Search radius in meters"
+          },
+          {
+            "name": "categories",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Comma separated list of categories or keywords"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 50 },
+            "description": "Maximum number of places to return"
+          },
+          {
+            "name": "open_now",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "boolean" },
+            "description": "Filter to only show places that are currently open"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "places": {
+                      "type": "array",
+                      "items": { "type": "object" }
+                    },
+                    "provider_used": { "type": "string" },
+                    "cache_hit": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/geocode": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "Geocode an address",
+        "description": "Resolves an address string to coordinates using OSM and Google fallbacks.",
+        "operationId": "geocode",
+        "x-zuplo-route": {
+          "corsPolicy": "anything-goes",
+          "handler": {
+            "export": "default",
+            "module": "$import(./modules/handlers/geocode-handler)",
+            "options": {}
+          }
+        },
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Address or place name to geocode"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/travel-times": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "post": {
+        "summary": "Estimate travel times",
+        "description": "Estimates travel times between an origin and multiple destinations.",
+        "operationId": "travelTimes",
+        "x-zuplo-route": {
+          "corsPolicy": "anything-goes",
+          "handler": {
+            "export": "default",
+            "module": "$import(./modules/handlers/travel-times-handler)",
+            "options": {}
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "origin": {
+                    "type": "object",
+                    "properties": {
+                      "lat": { "type": "number" },
+                      "lng": { "type": "number" }
+                    },
+                    "required": ["lat", "lng"]
+                  },
+                  "destinations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "lat": { "type": "number" },
+                        "lng": { "type": "number" }
+                      },
+                      "required": ["id", "lat", "lng"]
+                    }
+                  }
+                },
+                "required": ["origin", "destinations"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
       }
     }
   }
