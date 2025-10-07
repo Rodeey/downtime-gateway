@@ -1,5 +1,6 @@
 import { normalizeYelp, type Place } from "../normalizer";
 import { withUserAgent } from "../utils";
+import type { EnvSource } from "../env";
 
 const BASE_URL = "https://api.yelp.com/v3/businesses/search";
 
@@ -12,17 +13,20 @@ export interface YelpQuery {
   open_now?: boolean;
 }
 
-function getApiKey(): string | null {
-  try {
-    return zuplo.env.YELP_API_KEY ?? null;
-  } catch (error) {
-    console.warn("[Yelp] API key not configured", error);
-    return null;
+function getApiKey(env?: EnvSource): string | null {
+  const value = env?.YELP_API_KEY;
+  if (typeof value === "string" && value.length > 0) {
+    return value;
   }
+  console.warn("[Yelp] API key not configured");
+  return null;
 }
 
-export async function searchWithYelp(query: YelpQuery): Promise<Place[]> {
-  const apiKey = getApiKey();
+export async function searchWithYelp(
+  query: YelpQuery,
+  env?: EnvSource
+): Promise<Place[]> {
+  const apiKey = getApiKey(env);
   if (!apiKey) {
     return [];
   }

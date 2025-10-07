@@ -1,5 +1,6 @@
 import { getPlaces, type PlacesRequest } from "../logic/api-logic";
 import { parseCategories } from "../logic/utils";
+import type { HandlerContext } from "./context";
 
 function parseBoolean(value: string | null): boolean | undefined {
   if (value === null) {
@@ -47,12 +48,15 @@ function buildRequest(url: URL): PlacesRequest {
   };
 }
 
-export default async function handler(request: Request): Promise<Response> {
+export default async function handler(
+  request: Request,
+  ctx: HandlerContext
+): Promise<Response> {
   const url = new URL(request.url);
 
   try {
     const query = buildRequest(url);
-    const result = await getPlaces(query, { request });
+    const result = await getPlaces(query, { request, env: ctx?.env });
 
     return new Response(
       JSON.stringify({
