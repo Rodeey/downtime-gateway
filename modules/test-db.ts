@@ -1,21 +1,26 @@
-import { createClient } from "@supabase/supabase-js";
+import { type CategoryBucket } from "./logic/category-map";
+import { logRequest } from "./logic/supabase";
 
-const SUPABASEURL = zuplo.env.SUPABASEURL;  
-const SUPABASEKEY = zuplo.env.SUPABASEKEY;  
+const TEST_CATEGORY: CategoryBucket = "general";
 
-const supabase = createClient(SUPABASEURL, SUPABASEKEY);
+export default async function handler(request: Request): Promise<Response> {
+  await logRequest({
+    category: TEST_CATEGORY,
+    provider_used: "test-db",
+    source: "live",
+    count: 0,
+    duration_ms: 0,
+    lat: 0,
+    lng: 0,
+    radius_m: 0,
+    open_now: false,
+    force_refresh: false,
+    request,
+  });
 
-export default async function handler(request: Request) {
-  const { data, error } = await supabase.from("places").select("id, name").limit(1);
-
-  if (error) {
-    return new Response(JSON.stringify({ success: false, error: error.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
-  }
-
-  return new Response(JSON.stringify({ success: true, sample: data }), {
-    headers: { "Content-Type": "application/json" }
+  return new Response(JSON.stringify({ ok: true }), {
+    headers: {
+      "Content-Type": "application/json",
+    },
   });
 }
