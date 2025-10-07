@@ -13,12 +13,15 @@ export interface YelpQuery {
   open_now?: boolean;
 }
 
-function getApiKey(env?: EnvSource): string | null {
-  const value = env?.YELP_API_KEY;
-  if (typeof value === "string" && value.length > 0) {
-    return value;
+function getApiKey(): string | null {
+  try {
+    return zuplo.env.YELP_API_KEY ?? null;
+  } catch (error) {
+    console.warn("[Yelp] API key not configured", error);
   }
-  console.warn("[Yelp] API key not configured");
+  if (typeof process !== "undefined" && process.env?.YELP_API_KEY) {
+    return process.env.YELP_API_KEY;
+  }
   return null;
 }
 

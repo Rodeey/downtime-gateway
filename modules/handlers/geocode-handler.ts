@@ -13,10 +13,17 @@ interface GeoapifyResponse {
   features?: GeoapifyFeature[];
 }
 
-function getApiKey(ctx: HandlerContext | undefined): string | null {
-  const value = ctx?.env?.GEOAPIFY_KEY;
-  if (typeof value === "string" && value.length > 0) {
-    return value;
+function getApiKey(): string | null {
+  try {
+    const value = (zuplo.env as Record<string, unknown>).GEOAPIFY_KEY;
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  } catch (error) {
+    console.warn("[Geocode] Unable to read GEOAPIFY_KEY", error);
+  }
+  if (typeof process !== "undefined" && process.env.GEOAPIFY_KEY) {
+    return process.env.GEOAPIFY_KEY;
   }
   console.warn("[Geocode] Unable to read GEOAPIFY_KEY");
   return null;
