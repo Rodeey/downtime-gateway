@@ -26,6 +26,7 @@ import { rankPlaces } from "./ranker";
 import { searchWithOsm } from "./providers/osm";
 import { searchWithFoursquare } from "./providers/foursquare";
 import { searchWithYelp } from "./providers/yelp";
+import type { EnvSource } from "./env";
 
 export interface PlacesRequest {
   lat: number;
@@ -38,6 +39,7 @@ export interface PlacesRequest {
 
 export interface PlacesContext {
   request?: Request;
+  env?: EnvSource;
 }
 
 interface InternalRequest extends PlacesRequest {
@@ -142,7 +144,8 @@ async function runPipeline(
   places: Place[],
   bucket: CategoryBucket,
   request: InternalRequest,
-  origin: TravelOrigin
+  origin: TravelOrigin,
+  env?: EnvSource
 ): Promise<Place[]> {
   const annotated = places.map((place) =>
     annotateDistance(place, request.lat, request.lng)
@@ -154,6 +157,7 @@ async function runPipeline(
   const preRank = withoutClosingSoon.slice(0, Math.max(cap * 2, cap));
   const withTravel = await addTravelTimes(preRank, origin, {
     forceRefresh: request.force_refresh,
+    env,
   });
   const ranked = rankPlaces(withTravel);
   return ranked.slice(0, cap);
@@ -166,7 +170,8 @@ interface ProviderFetchResult {
 
 async function fetchForCategory(
   bucket: CategoryBucket,
-  request: InternalRequest
+  request: InternalRequest,
+  env?: EnvSource
 ): Promise<ProviderFetchResult> {
   const limit = capByCategory[bucket];
   const threshold = thresholdByCategory[bucket];
@@ -188,14 +193,17 @@ async function fetchForCategory(
   }
 
   const yelpCategories = YELP_CATEGORY_MAP[bucket] ?? [];
-  const yelpResults = await searchWithYelp({
-    lat: request.lat,
-    lng: request.lng,
-    radius_m: request.radius_m,
-    limit,
-    categories: yelpCategories,
-    open_now: request.open_now,
-  });
+  const yelpResults = await searchWithYelp(
+    {
+      lat: request.lat,
+      lng: request.lng,
+      radius_m: request.radius_m,
+      limit,
+      categories: yelpCategories,
+      open_now: request.open_now,
+    },
+    env
+  );
   if (yelpResults.length > 0) {
     aggregated.push(...yelpResults);
     providers.push("yelp");
@@ -203,14 +211,17 @@ async function fetchForCategory(
 
   if (aggregated.length < threshold) {
     const fsqCategories = FSQ_CATEGORY_MAP[bucket] ?? [];
-    const fsqResults = await searchWithFoursquare({
-      lat: request.lat,
-      lng: request.lng,
-      radius_m: request.radius_m,
-      limit,
-      categories: fsqCategories,
-      open_now: request.open_now,
-    });
+    const fsqResults = await searchWithFoursquare(
+      {
+        lat: request.lat,
+        lng: request.lng,
+        radius_m: request.radius_m,
+        limit,
+        categories: fsqCategories,
+        open_now: request.open_now,
+      },
+      env
+    );
     if (fsqResults.length > 0) {
       providers.push("foursquare");
       const existing = new Set(aggregated.map((place) => place.place_id));
@@ -245,7 +256,7 @@ async function gatherForCategory(
   let basePlaces: Place[] | null = null;
 
   if (!request.force_refresh) {
-    const cached = await getCachedPlaces(cacheKey);
+    const cached = await getCachedPlaces(cacheKey, context.env);
     if (cached && cached.length > 0) {
       basePlaces = clonePlaces(cached, bucket);
       providerUsed = "cache";
@@ -254,32 +265,46 @@ async function gatherForCategory(
   }
 
   if (!basePlaces) {
-    const fetched = await fetchForCategory(bucket, request);
+    const fetched = await fetchForCategory(bucket, request, context.env);
     basePlaces = clonePlaces(fetched.places, bucket);
     providerUsed = fetched.providers.join(",") || "none";
-    await putCachedPlaces(cacheKey, basePlaces, {
-      provider: providerUsed,
-      count: basePlaces.length,
-      duration_ms: Date.now() - started,
-    });
+    await putCachedPlaces(
+      cacheKey,
+      basePlaces,
+      {
+        provider: providerUsed,
+        count: basePlaces.length,
+        duration_ms: Date.now() - started,
+      },
+      context.env
+    );
   }
 
-  const processed = await runPipeline(basePlaces, bucket, request, origin);
+  const processed = await runPipeline(
+    basePlaces,
+    bucket,
+    request,
+    origin,
+    context.env
+  );
   const duration_ms = Date.now() - started;
 
-  await logRequest({
-    category: bucket,
-    provider_used: providerUsed,
-    source,
-    count: processed.length,
-    duration_ms,
-    lat: request.lat,
-    lng: request.lng,
-    radius_m: request.radius_m,
-    open_now: request.open_now,
-    force_refresh: request.force_refresh,
-    request: context.request,
-  });
+  await logRequest(
+    {
+      category: bucket,
+      provider_used: providerUsed,
+      source,
+      count: processed.length,
+      duration_ms,
+      lat: request.lat,
+      lng: request.lng,
+      radius_m: request.radius_m,
+      open_now: request.open_now,
+      force_refresh: request.force_refresh,
+      request: context.request,
+    },
+    context.env
+  );
 
   return {
     bucket,
