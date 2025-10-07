@@ -207,7 +207,7 @@
       },
       "get": {
         "summary": "Geocode an address",
-        "description": "Uses Geoapify to convert an address or place name into coordinates.",
+        "description": "Uses OpenStreetMap Nominatim to convert an address or place name into coordinates.",
         "operationId": "geocode",
         "x-zuplo-route": {
           "corsPolicy": "anything-goes",

@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "zuplo dev",
+    "build": "zuplo build",
     "test": "zuplo test",
     "docs": "npm run dev --workspace docs"
   },

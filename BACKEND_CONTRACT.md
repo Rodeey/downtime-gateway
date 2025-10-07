@@ -49,13 +49,13 @@ Returns a JSON object with provider metadata and the waterfall-normalized places
 ```
 
 **Provider Logic**
-The provider waterfall tries the following order until results are returned:
-1. OpenStreetMap Photon search (`modules/logic/providers/osm.ts`).
+The provider waterfall tries the following order until category targets are satisfied:
+1. OpenStreetMap Overpass search (`modules/logic/providers/osm.ts`) for outdoor buckets.
 2. Foursquare Places (`modules/logic/providers/foursquare.ts`).
 3. Yelp Fusion (`modules/logic/providers/yelp.ts`).
-4. Google Places Nearby Search (`modules/logic/providers/google.ts`).
 
-Each provider returns normalized `Place` objects; the orchestrator stops at the first provider that yields results. Failures are logged and the next provider is attempted. Implementation: `modules/logic/api-logic.ts#getPlaces`.
+Each provider returns normalized `Place` objects; the orchestrator stops once thresholds are met. Failures are logged and the next provider is attempted. Implementation: `modules/logic/api-logic.ts#getPlaces`.
+Cached results are persisted in Supabase for seven days to reduce upstream API usage.
 
 **Error Handling**
 - `400 Bad Request` when required query parameters are missing or invalid.
@@ -77,13 +77,12 @@ GET /geocode?query=1600+Pennsylvania+Ave+NW+Washington+DC
 {
   "location": { "lat": 38.8977, "lng": -77.0365 },
   "address": "1600 Pennsylvania Avenue NW, Washington, DC 20500, USA",
-  "provider": "google"
+  "provider": "nominatim"
 }
 ```
 
 **Provider Logic**
 1. OpenStreetMap Nominatim (`modules/logic/api-logic.ts#geocode`).
-2. Google Geocoding (fallback when OSM misses and a Google key is configured).
 
 **Error Handling**
 - `400 Bad Request` when `query` is empty.
@@ -162,8 +161,6 @@ Direct Supabase read to validate connectivity: `modules/test-db.ts`.
 | `SUPABASEKEY` | Supabase key used by `/test-db`. | ✅ |
 | `FOURSQUARE_API_KEY` | Credential for Foursquare provider. | ⚠️ Required for Foursquare coverage. |
 | `YELP_API_KEY` | Credential for Yelp provider. | ⚠️ Required for Yelp coverage. |
-| `GOOGLE_PLACES_API_KEY` | Credential for Google Places fallback. | ⚠️ Required for Google provider usage. |
-| `GOOGLE_GEOCODING_API_KEY` | Optional dedicated key for geocoding fallback. | ⚠️ Needed if Google geocoding should be available. |
 | `NEXT_PUBLIC_GATEWAY_URL` | Frontend configuration pointing to the deployed gateway. | ✅ for frontend integration |
 
 ## Deployment / CORS Notes
