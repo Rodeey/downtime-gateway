@@ -3,7 +3,20 @@ import { withUserAgent } from "../utils";
 import { readEnvValue, type EnvSource } from "../env";
 
 declare const zuplo: any;
-const YELP_API_KEY: string | null = zuplo?.env?.YELP_API_KEY ?? null;
+
+function readZuploEnv(key: string): string | null {
+  try {
+    if (typeof zuplo !== "undefined") {
+      const value = zuplo?.env?.[key];
+      return typeof value === "string" && value.length > 0 ? value : null;
+    }
+  } catch (error) {
+    console.warn(`[Yelp] Failed to read ${key} from zuplo.env`, error);
+  }
+  return null;
+}
+
+const MODULE_API_KEY = readZuploEnv("YELP_API_KEY");
 
 const BASE_URL = "https://api.yelp.com/v3/businesses/search";
 
@@ -17,19 +30,9 @@ export interface YelpQuery {
 }
 
 function getApiKey(env?: EnvSource): string | null {
-  try {
-    const key = YELP_API_KEY;
-    try {
-      console.log("[Yelp Provider] Key present:", Boolean(key));
-      console.log("[Yelp Provider] Key length:", key ? String(key).length : 0);
-    } catch (e) {
-      // ignore logging failures
-    }
-    if (key) {
-      return key;
-    }
-  } catch (error) {
-    console.warn("[Yelp] API key not configured", error);
+  const moduleKey = readZuploEnv("YELP_API_KEY") ?? MODULE_API_KEY;
+  if (moduleKey) {
+    return moduleKey;
   }
 
   const envKey = readEnvValue(env, "YELP_API_KEY");
