@@ -2,10 +2,71 @@ import { normalizeYelp, type Place } from "../normalizer";
 import { withUserAgent } from "../utils";
 import { readEnvValue, type EnvSource } from "../env";
 
-declare const zuplo: any;
-const YELP_API_KEY: string | null = zuplo?.env?.YELP_API_KEY ?? null;
+declare const zuplo: undefined | { env?: Record<string, unknown> };
 
 const BASE_URL = "https://api.yelp.com/v3/businesses/search";
+
+let cachedApiKey: string | null | undefined;
+let missingKeyWarned = false;
+
+function readZuploEnv(key: string): string | null {
+  try {
+    if (typeof zuplo !== "undefined" && typeof zuplo?.env === "object") {
+      const value = zuplo.env?.[key];
+      if (typeof value === "string" && value.length > 0) {
+        return value;
+      }
+    }
+  } catch (error) {
+    console.warn(`[Yelp] Failed to read ${key} from zuplo.env`, error);
+  }
+  return null;
+}
+
+function rememberKey(value: string | null): string | null {
+  if (value && value.length > 0) {
+    cachedApiKey = value;
+    return value;
+  }
+  return null;
+}
+
+function resolveProcessEnv(key: string): string | null {
+  if (typeof process === "undefined" || !process.env) {
+    return null;
+  }
+  const value = process.env[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function resolveApiKey(env?: EnvSource): string | null {
+  if (cachedApiKey === undefined) {
+    cachedApiKey = readZuploEnv("YELP_API_KEY");
+  }
+
+  if (cachedApiKey) {
+    return cachedApiKey;
+  }
+
+  const envValue = readEnvValue(env, "YELP_API_KEY");
+  if (envValue) {
+    return rememberKey(envValue);
+  }
+
+  const processValue = resolveProcessEnv("YELP_API_KEY");
+  if (processValue) {
+    return rememberKey(processValue);
+  }
+
+  if (!missingKeyWarned) {
+    console.warn(
+      "[Yelp] API key not configured; skipping Yelp search results for this request."
+    );
+    missingKeyWarned = true;
+  }
+
+  return null;
+}
 
 export interface YelpQuery {
   lat: number;
@@ -16,39 +77,11 @@ export interface YelpQuery {
   open_now?: boolean;
 }
 
-function getApiKey(env?: EnvSource): string | null {
-  try {
-    const key = YELP_API_KEY;
-    try {
-      console.log("[Yelp Provider] Key present:", Boolean(key));
-      console.log("[Yelp Provider] Key length:", key ? String(key).length : 0);
-    } catch (e) {
-      // ignore logging failures
-    }
-    if (key) {
-      return key;
-    }
-  } catch (error) {
-    console.warn("[Yelp] API key not configured", error);
-  }
-
-  const envKey = readEnvValue(env, "YELP_API_KEY");
-  if (envKey) {
-    return envKey;
-  }
-
-  if (typeof process !== "undefined" && process.env?.YELP_API_KEY) {
-    return process.env.YELP_API_KEY;
-  }
-
-  return null;
-}
-
 export async function searchWithYelp(
   query: YelpQuery,
   env?: EnvSource
 ): Promise<Place[]> {
-  const apiKey = getApiKey(env);
+  const apiKey = resolveApiKey(env);
   if (!apiKey) {
     return [];
   }
@@ -70,6 +103,7 @@ export async function searchWithYelp(
     withUserAgent({
       headers: {
         Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
       },
     })
   );
