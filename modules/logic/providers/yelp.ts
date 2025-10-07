@@ -4,10 +4,15 @@ import { readEnvValue, type EnvSource } from "../env";
 
 declare const zuplo: undefined | { env?: Record<string, unknown> };
 
+const BASE_URL = "https://api.yelp.com/v3/businesses/search";
+
+let cachedApiKey: string | null | undefined;
+let missingKeyWarned = false;
+
 function readZuploEnv(key: string): string | null {
   try {
-    if (typeof zuplo !== "undefined" && zuplo?.env) {
-      const value = zuplo.env[key];
+    if (typeof zuplo !== "undefined" && typeof zuplo?.env === "object") {
+      const value = zuplo.env?.[key];
       if (typeof value === "string" && value.length > 0) {
         return value;
       }
@@ -18,24 +23,10 @@ function readZuploEnv(key: string): string | null {
   return null;
 }
 
-let cachedModuleKey: string | null = readZuploEnv("YELP_API_KEY");
-let missingKeyWarned = false;
-
-const BASE_URL = "https://api.yelp.com/v3/businesses/search";
-
-export interface YelpQuery {
-  lat: number;
-  lng: number;
-  radius_m: number;
-  limit: number;
-  categories?: string[];
-  open_now?: boolean;
-}
-
-function remember(key: string | null): string | null {
-  if (key && key.length > 0) {
-    cachedModuleKey = key;
-    return key;
+function rememberKey(value: string | null): string | null {
+  if (value && value.length > 0) {
+    cachedApiKey = value;
+    return value;
   }
   return null;
 }
@@ -48,20 +39,23 @@ function resolveProcessEnv(key: string): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function getApiKey(env?: EnvSource): string | null {
-  const moduleKey = cachedModuleKey ?? readZuploEnv("YELP_API_KEY");
-  if (moduleKey) {
-    return remember(moduleKey);
+function resolveApiKey(env?: EnvSource): string | null {
+  if (cachedApiKey === undefined) {
+    cachedApiKey = readZuploEnv("YELP_API_KEY");
   }
 
-  const envKey = readEnvValue(env, "YELP_API_KEY");
-  if (envKey) {
-    return remember(envKey);
+  if (cachedApiKey) {
+    return cachedApiKey;
   }
 
-  const processKey = resolveProcessEnv("YELP_API_KEY");
-  if (processKey) {
-    return remember(processKey);
+  const envValue = readEnvValue(env, "YELP_API_KEY");
+  if (envValue) {
+    return rememberKey(envValue);
+  }
+
+  const processValue = resolveProcessEnv("YELP_API_KEY");
+  if (processValue) {
+    return rememberKey(processValue);
   }
 
   if (!missingKeyWarned) {
@@ -74,11 +68,20 @@ function getApiKey(env?: EnvSource): string | null {
   return null;
 }
 
+export interface YelpQuery {
+  lat: number;
+  lng: number;
+  radius_m: number;
+  limit: number;
+  categories?: string[];
+  open_now?: boolean;
+}
+
 export async function searchWithYelp(
   query: YelpQuery,
   env?: EnvSource
 ): Promise<Place[]> {
-  const apiKey = getApiKey(env);
+  const apiKey = resolveApiKey(env);
   if (!apiKey) {
     return [];
   }
@@ -100,6 +103,7 @@ export async function searchWithYelp(
     withUserAgent({
       headers: {
         Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
       },
     })
   );
